@@ -1,0 +1,47 @@
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Node.js / React / Vite
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Java / Maven / Spring Boot
+target/
+backend/target/
+*.class
+*.jar
+*.war
+
+# IDE settings
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime uploads and local backups
+backend/uploads/
+*.dump
