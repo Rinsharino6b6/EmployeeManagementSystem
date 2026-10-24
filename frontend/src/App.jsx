@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import LoginPage from "./components/LoginPage";
+import RegisterPage from "./components/RegisterPage";
+import Sidebar from "./components/Sidebar";
+import TopNav from "./components/TopNav";
+import MyProfilePage from "./components/MyProfilePage";
+import AccountSettings from "./components/AccountSettings";
+import AttendancePage from "./components/AttendancePage";
+import OfficeLocationPage from "./components/OfficeLocationPage";
+import ConfirmDeleteModal from "./components/ConfirmDeleteModal";
+import DepartmentDeleteModal from "./components/DepartmentDeleteModal";
 
 const API_URL = "http://localhost:8081/api/employees";
 
-const EMPTY_FORM = {
-  id: "",
-  name: "",
-  department: "",
-  role: "",
-  salary: "",
-};
+const EMPTY_FORM = { id: "", name: "", department: "", role: "", salary: "" };
 
 function formatSalary(value) {
   const amount = Number(value);
@@ -21,22 +26,96 @@ function formatSalary(value) {
 }
 
 function getInitials(name = "") {
-  return name
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase() || "EM";
+  return (
+    name
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((part) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "EM"
+  );
 }
 
-function App() {
+const AVATAR_COLORS = [
+  "#3b82f6",
+  "#ec4899",
+  "#10b981",
+  "#f97316",
+  "#8b5cf6",
+];
+
+function avatarColor(name = "") {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffff;
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
+
+// ─── Stat card ───────────────────────────────────────────────────────────────
+function StatCard({ label, value, icon, accent }) {
+  return (
+    <div
+      className="rounded-2xl bg-white border border-slate-200 p-5 shadow-sm flex items-center gap-4"
+      style={{ borderLeft: `4px solid ${accent}` }}
+    >
+      <div
+        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-2xl"
+        style={{ background: accent + "18" }}
+      >
+        {icon}
+      </div>
+      <div>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{label}</p>
+        <p className="text-2xl font-bold text-slate-800">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Employee Avatar ──────────────────────────────────────────────────────────
+function EmployeeAvatar({ name }) {
+  const color = avatarColor(name);
+  return (
+    <div
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow"
+      style={{ background: color }}
+    >
+      {getInitials(name)}
+    </div>
+  );
+}
+
+// ─── Main authenticated app shell ────────────────────────────────────────────
+function AppShell() {
+  const { currentUser, can } = useAuth();
+
+  // ── UI view state ──
+  const [view, setView] = useState("login"); // "login" | "register" | "app"
+  const goToRegister = () => setView("register");
+  const goToLogin = () => setView("login");
+
+  // Switch to app view when a user is authenticated
+  useEffect(() => {
+    if (currentUser) setView("app");
+  }, [currentUser]);
+
+ 
+  // Reset to login only when an authenticated session ends
+  useEffect(() => {
+    if (!currentUser && view === "app") {
+      setView("login");
+    }
+  }, [currentUser, view]);
+
+
+  // ── State ──
   const [employees, setEmployees] = useState([]);
+  const [savedDepartments, setSavedDepartments] = useState([]);
   const [search, setSearch] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("All Departments");
   const [roleFilter, setRoleFilter] = useState("All Roles");
-  const [activePage, setActivePage] = useState("Employees");
+  const [activePage, setActivePage] = useState("Overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -47,59 +126,99 @@ function App() {
   const [notice, setNotice] = useState("");
   const [deletedEmployee, setDeletedEmployee] = useState(null);
   const [undoingDelete, setUndoingDelete] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [pendingDepartmentDelete, setPendingDepartmentDelete] = useState(null);
+  const [departmentDeleteError, setDepartmentDeleteError] = useState("");
+  const [departmentName, setDepartmentName] = useState("");
+  const [departmentFormError, setDepartmentFormError] = useState("");
+  const [deletedDepartment, setDeletedDepartment] = useState(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // ── Data loading ──
   const loadEmployees = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
-      const response = await fetch(API_URL);
-
-      if (!response.ok) {
-        throw new Error(`Request failed (${response.status})`);
+      const [response, departmentsResponse] = await Promise.all([
+        fetch(API_URL),
+        fetch("http://localhost:8081/api/departments", {
+          headers: {
+            Authorization: `****** || ""}`,
+          },
+        }),
+      ]);
+      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      if (!departmentsResponse.ok) {
+        throw new Error(`Department request failed (${departmentsResponse.status})`);
       }
-
-      const data = await response.json();
-      if (!Array.isArray(data)) {
-        throw new Error("The API response was not an employee list.");
+      const [data, departmentData] = await Promise.all([
+        response.json(),
+        departmentsResponse.json(),
+      ]);
+      if (!Array.isArray(data) || !Array.isArray(departmentData)) {
+        throw new Error("Invalid employee or department API response.");
       }
-
       setEmployees(data);
-    } catch (err) {
+      setSavedDepartments(departmentData);
+    } catch (loadError) {
+      console.error("Unable to load employees and departments:", loadError);
       setError(
-        "Unable to load employees. Make sure Spring Boot is running on port 8081 and the API is available."
+        "Unable to load employees or departments. Make sure Spring Boot is running on port 8081."
       );
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentUser?.sessionToken]);
 
+  useEffect(() => { loadEmployees(); }, [loadEmployees]);
+
+  // Auto-dismiss notice
   useEffect(() => {
-    loadEmployees();
-  }, [loadEmployees]);
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(""), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
-  const filteredEmployees = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return employees.filter((employee) => {
-      const matchesSearch = `${employee.name ?? ""} ${employee.id ?? ""} ${employee.department ?? ""} ${employee.role ?? ""}`
-        .toLowerCase()
-        .includes(query);
-      const matchesDepartment = departmentFilter === "All Departments" || employee.department === departmentFilter;
-      const matchesRole = roleFilter === "All Roles" || employee.role === roleFilter;
-      return matchesSearch && matchesDepartment && matchesRole;
-    });
-  }, [employees, search, departmentFilter, roleFilter]);
-
+  // ── Derived data ──
   const departments = useMemo(
-    () => [...new Set(employees.map((employee) => employee.department).filter(Boolean))],
+    () => [...new Set([
+      ...savedDepartments,
+      ...employees.map((employee) => employee.department).filter(Boolean),
+    ])].sort((a, b) => a.localeCompare(b)),
+    [employees, savedDepartments]
+  );
+  const filteredDepartments = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return departments.filter((department) =>
+      department.toLowerCase().includes(query)
+    );
+  }, [departments, search]);
+  const roles = useMemo(
+    () => [...new Set(employees.map((e) => e.role).filter(Boolean))],
     [employees]
   );
-
   const averageSalary = employees.length
-    ? employees.reduce((sum, employee) => sum + Number(employee.salary || 0), 0) /
-      employees.length
+    ? employees.reduce((s, e) => s + Number(e.salary || 0), 0) / employees.length
     : 0;
+  const canViewCompensation = currentUser?.role !== "EMPLOYEE";
+  const managersCount = employees.filter((e) => /manager/i.test(e.role || "")).length;
 
+  // ── Filtered list (role‑aware) ──
+  const filteredEmployees = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return employees.filter((e) => {
+      const matchesSearch = `${e.name ?? ""} ${e.id ?? ""} ${e.department ?? ""} ${e.role ?? ""}`
+        .toLowerCase()
+        .includes(query);
+      const matchesDept = departmentFilter === "All Departments" || e.department === departmentFilter;
+      const matchesRole = roleFilter === "All Roles" || e.role === roleFilter;
+      return matchesSearch && matchesDept && matchesRole;
+    });
+  }, [employees, search, departmentFilter, roleFilter, currentUser]);
+
+  // ── Form handlers ──
   function openAddForm() {
+    if (!can("addEmployee")) return;
     setEditingId(null);
     setForm(EMPTY_FORM);
     setFormError("");
@@ -108,6 +227,7 @@ function App() {
   }
 
   function openEditForm(employee) {
+    if (!can("editEmployee")) return;
     setEditingId(employee.id);
     setForm({
       id: employee.id ?? "",
@@ -127,332 +247,756 @@ function App() {
     setFormError("");
   }
 
-  function handleFormChange(event) {
-    const { name, value } = event.target;
-    setForm((current) => ({ ...current, [name]: value }));
+  function handleFormChange(e) {
+    const { name, value } = e.target;
+    setForm((cur) => ({ ...cur, [name]: value }));
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault();
+  async function handleSubmit(e) {
+    e.preventDefault();
     setFormError("");
     setNotice("");
-
     const employeeId = form.id.trim();
     const employeeName = form.name.trim();
     const department = form.department.trim();
     const role = form.role.trim();
     const salary = Number(form.salary);
-
     if (!employeeId || !employeeName || !department || !role || form.salary === "") {
       setFormError("Please complete all fields.");
       return;
     }
-
     if (!Number.isFinite(salary) || salary < 0) {
-      setFormError("Enter a valid, non-negative salary.");
+      setFormError("Enter a valid, non‑negative salary.");
       return;
     }
-
-    const payload = {
-      id: employeeId,
-      name: employeeName,
-      department,
-      role,
-      salary,
-    };
-
+    const payload = { id: employeeId, name: employeeName, department, role, salary };
     try {
       setSaving(true);
       const isEditing = editingId !== null;
-      const url = isEditing
-        ? `${API_URL}/${encodeURIComponent(editingId)}`
-        : API_URL;
-
+      const url = isEditing ? `${API_URL}/${encodeURIComponent(editingId)}` : API_URL;
       const response = await fetch(url, {
         method: isEditing ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${currentUser?.sessionToken || ""}`,
+        },
         body: JSON.stringify(payload),
       });
-
-      if (response.status === 409) {
-        throw new Error("That employee ID already exists. Choose a different ID.");
-      }
-      if (response.status === 404 && isEditing) {
-        throw new Error("This employee was not found. Refresh the employee list and try again.");
-      }
+      if (response.status === 409) throw new Error("That employee ID already exists.");
+      if (response.status === 404 && isEditing) throw new Error("Employee not found. Refresh and try again.");
       if (!response.ok) {
         const details = await response.text().catch(() => "");
         throw new Error(details || `Could not save employee (${response.status}).`);
       }
-
       setModalOpen(false);
       setDeletedEmployee(null);
       setNotice(isEditing ? "Employee updated successfully." : "Employee added successfully.");
       await loadEmployees();
     } catch (err) {
-      setFormError(
-        err.message ||
-          "Could not save the employee. Check the backend and try again."
-      );
+      setFormError(err.message || "Unexpected error.");
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete(employee) {
-    const confirmed = window.confirm(
-      `Delete ${employee.name} (${employee.id})? You can use Undo after deletion to restore this record.`
-    );
-    if (!confirmed) return;
+  // ── Delete handling ──
+  function requestDelete(employee) {
+    if (!can("deleteEmployee")) return;
+    setPendingDelete(employee);
+  }
 
-    setNotice("");
-    setError("");
-
+  async function confirmDelete() {
+    if (!pendingDelete) return;
     try {
-      const response = await fetch(
-        `${API_URL}/${encodeURIComponent(employee.id)}`,
-        { method: "DELETE" }
-      );
-
-      if (response.status === 404) {
-        throw new Error("Employee not found. Refresh the list and try again.");
-      }
-      if (!response.ok) {
-        throw new Error(`Could not delete employee (${response.status}).`);
-      }
-
-      setDeletedEmployee(employee);
-      setNotice(`${employee.name} was deleted.`);
+      setSaving(true);
+      const response = await fetch(`${API_URL}/${encodeURIComponent(pendingDelete.id)}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${currentUser?.sessionToken || ""}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to delete employee.");
+      setDeletedEmployee(pendingDelete);
+      setNotice("Employee deleted. You can undo.");
       await loadEmployees();
     } catch (err) {
-      setError(err.message || "Could not delete the employee.");
+      setNotice(err.message || "Delete failed.");
+    } finally {
+      setSaving(false);
+      setPendingDelete(null);
     }
   }
 
-  async function handleUndoDelete() {
-    if (!deletedEmployee || undoingDelete) return;
-
-    setUndoingDelete(true);
-    setError("");
+  async function confirmDepartmentDelete() {
+    if (!pendingDepartmentDelete || !can("manageDepartments")) return;
+    const { department, moveTo } = pendingDepartmentDelete;
+    setSaving(true);
+    setDepartmentDeleteError("");
     try {
+      const response = await fetch(
+        `http://localhost:8081/api/departments/${encodeURIComponent(department)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `****** || ""}`,
+          },
+          body: JSON.stringify({ moveTo: moveTo || null }),
+        }
+      );
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.message || `Could not remove department (${response.status}).`);
+      }
+      const deletion = await response.json();
+      if (departmentFilter === department) setDepartmentFilter("All Departments");
+      setDeletedDepartment(deletion);
+      setDeletedEmployee(null);
+      setPendingDepartmentDelete(null);
+      setNotice(
+        moveTo
+          ? `${department} removed. Employees moved to ${moveTo}.`
+          : `${department} removed.`
+      );
+      await loadEmployees();
+    } catch (deleteError) {
+      setDepartmentDeleteError(deleteError.message || "Unable to remove department.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUndoDepartment() {
+    if (!deletedDepartment || saving) return;
+    setSaving(true);
+    setDepartmentDeleteError("");
+    try {
+      const response = await fetch(
+        "http://localhost:8081/api/departments/undo-removal",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `****** || ""}`,
+          },
+          body: JSON.stringify(deletedDepartment),
+        }
+      );
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.message || `Could not restore department (${response.status}).`);
+      }
+      setNotice(`${deletedDepartment.name} restored.`);
+      setDeletedDepartment(null);
+      await loadEmployees();
+    } catch (undoError) {
+      setDepartmentDeleteError(undoError.message || "Unable to restore department.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function addDepartment(event) {
+    event.preventDefault();
+    if (!can("manageDepartments")) return;
+    setSaving(true);
+    setDepartmentFormError("");
+    try {
+      const response = await fetch("http://localhost:8081/api/departments", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `****** || ""}`,
+        },
+        body: JSON.stringify({ name: departmentName.trim() }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.message || `Could not add department (${response.status}).`);
+      }
+      setSavedDepartments(await response.json());
+      setDepartmentName("");
+      setNotice("Department added.");
+    } catch (addError) {
+      setDepartmentFormError(addError.message || "Unable to add department.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUndo() {
+    if (!deletedEmployee || undoingDelete) return;
+    try {
+      setUndoingDelete(true);
       const response = await fetch(API_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${currentUser?.sessionToken || ""}`,
+        },
         body: JSON.stringify(deletedEmployee),
       });
-
-      if (response.status === 409) {
-        throw new Error("That employee ID is already in use, so the record could not be restored.");
-      }
-      if (!response.ok) {
-        const details = await response.text().catch(() => "");
-        throw new Error(details || `Could not restore employee (${response.status}).`);
-      }
-
-      const restoredName = deletedEmployee.name;
+      if (!response.ok) throw new Error("Undo failed.");
       setDeletedEmployee(null);
-      setNotice(`${restoredName} was restored successfully.`);
+      setNotice("Employee restored.");
       await loadEmployees();
     } catch (err) {
-      setError(err.message || "Could not restore the employee. Please try again.");
+      setNotice(err.message || "Could not undo.");
     } finally {
       setUndoingDelete(false);
     }
   }
 
-  const roles = useMemo(
-    () => [...new Set(employees.map((employee) => employee.role).filter(Boolean))],
-    [employees]
-  );
-  const managersCount = employees.filter((employee) => /manager/i.test(employee.role || "")).length;
+  // ─── Render: login / register ──────────────────────────────────────────────
+  if (view === "login") {
+    return <LoginPage onGoToRegister={goToRegister} />;
+  }
+  if (view === "register") {
+    return <RegisterPage onGoToLogin={goToLogin} />;
+  }
+
+  // ─── Render: authenticated shell ──────────────────────────────────────────
+  const mainMargin = sidebarCollapsed ? "72px" : "250px";
 
   return (
-    <div className="min-h-screen bg-[#f4f7fb] text-slate-900">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[178px] flex-col bg-[#0b2038] text-white md:flex">
-        <div className="flex h-[62px] items-center gap-2 px-5">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#1677f9] text-sm font-extrabold">B</div>
-          <div className="text-[17px] font-bold tracking-tight">Beeta<span className="text-sky-400">Logic</span></div>
-        </div>
-        <nav className="mt-5 space-y-1 px-2">
-          {[
-            { name: "Overview", label: "Dashboard", icon: "⌂" },
-            { name: "Employees", label: "Employees", icon: "♟" },
-            { name: "Departments", label: "Departments", icon: "▦" },
-          ].map((item) => (
-            <button key={item.name} type="button" onClick={() => setActivePage(item.name)}
-              className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-[12px] transition ${activePage === item.name ? "bg-[#1478f8] font-semibold text-white shadow-sm" : "text-slate-300 hover:bg-white/10 hover:text-white"}`}>
-              <span className="w-5 text-center text-lg">{item.icon}</span><span>{item.label}</span>
-              {item.name === "Employees" && <span className="ml-auto rounded bg-white/15 px-1.5 py-0.5 text-[10px]">{employees.length}</span>}
+    <>
+      <Sidebar
+        activePage={activePage}
+        setActivePage={setActivePage}
+        employeeCount={employees.length}
+        onCollapse={setSidebarCollapsed}
+      />
+
+      {/* Main content */}
+      <div
+        id="main-content"
+        style={{ marginLeft: mainMargin, transition: "margin-left 0.3s cubic-bezier(0.4,0,0.2,1)", minHeight: "100vh", background: "#f6f8fb" }}
+      >
+        <TopNav
+          search={search}
+          onSearchChange={setSearch}
+          activePage={activePage}
+          onGoToProfile={() => setActivePage("MyProfile")}
+          onGoToSettings={() => setActivePage("Settings")}
+        />
+
+        {/* Toast notice */}
+        {notice && (
+          <div
+            role="status"
+            style={{ position: "fixed", bottom: "24px", left: "50%", transform: "translateX(-50%)", zIndex: 9999 }}
+            className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-700 shadow-xl"
+          >
+            <span>✅ {notice}</span>
+            {deletedEmployee && (
+              <button
+                type="button"
+                onClick={handleUndo}
+                disabled={undoingDelete}
+                className="rounded-md bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 transition"
+              >
+                {undoingDelete ? "Undoing…" : "Undo"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setNotice("");
+              }}
+              className="text-slate-400 hover:text-slate-600 text-lg leading-none"
+            >
+              ×
             </button>
-          ))}
-        </nav>
-        <div className="mt-auto border-t border-white/10 px-4 py-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#6096ff] text-[11px] font-bold">AU</div>
-            <div className="min-w-0"><p className="truncate text-[11px] font-semibold">Admin User</p><p className="text-[10px] text-slate-400">HR Administrator</p></div>
           </div>
-        </div>
-      </aside>
+        )}
 
-      <div className="md:ml-[178px]">
-        <header className="sticky top-0 z-20 flex h-[54px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur md:px-6">
-          <label className="flex h-8 w-full max-w-[430px] items-center gap-2 rounded-md bg-[#f0f4f9] px-3 text-slate-400">
-            <span className="text-base">⌕</span>
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search anything..." aria-label="Search anything" className="w-full bg-transparent text-xs text-slate-700 outline-none placeholder:text-slate-400" />
-          </label>
-          <div className="ml-4 flex items-center gap-4">
-            <button type="button" aria-label="Notifications" title="Notifications" className="relative text-lg text-slate-500">♧<span className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-rose-500" /></button>
-            <div className="flex items-center gap-2"><div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#7da8ff] text-[10px] font-semibold text-white">AU</div><span className="hidden text-[11px] font-medium text-slate-700 sm:inline">Admin User</span><span className="text-xs text-slate-500">⌄</span></div>
-          </div>
-        </header>
-
-        <main className="p-4 sm:p-6 lg:p-7">
-          <div className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        {/* ── OVERVIEW (Dashboard) ────────────────────────────────── */}
+        {activePage === "Overview" && (
+          <div className="p-6 space-y-6">
             <div>
-              <h1 className="text-[25px] font-bold leading-tight tracking-tight text-[#101a35] sm:text-[28px]">Employee Management</h1>
-              <p className="mt-1 text-[13px] text-slate-500">Manage your people, roles, and team information.</p>
+              <h2 className="text-xl font-bold text-slate-800">Dashboard</h2>
+              <p className="text-sm text-slate-500 mt-0.5">Welcome back, {currentUser?.name}.</p>
             </div>
-            <button type="button" onClick={openAddForm} className="inline-flex h-[38px] items-center justify-center gap-2 self-start rounded-lg bg-[#1478f8] px-4 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700"><span className="text-lg leading-none">＋</span> Add Employee</button>
-          </div>
 
-          {notice && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><span>{notice}</span><div className="flex items-center gap-3">{deletedEmployee && <button type="button" onClick={handleUndoDelete} disabled={undoingDelete} className="rounded-md border border-emerald-300 bg-white px-3 py-1.5 text-xs font-bold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60">{undoingDelete ? "Restoring…" : "↶ Undo delete"}</button>}<button type="button" onClick={() => { setNotice(""); setDeletedEmployee(null); }} aria-label="Dismiss">×</button></div></div>}
-          {error && <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><span>{error}</span><button type="button" onClick={loadEmployees} className="font-semibold underline">Retry</button></div>}
+            {/* Stat cards */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="Total Employees" value={employees.length} icon="👥" accent="#1677f9" />
+              <StatCard label="Departments" value={departments.length} icon="🏢" accent="#8b5cf6" />
+              <StatCard label="Managers" value={managersCount} icon="🧑‍💼" accent="#f97316" />
+              {canViewCompensation && (
+                <StatCard label="Avg. Salary" value={formatSalary(averageSalary)} icon="💰" accent="#10b981" />
+              )}
+            </div>
 
-          {activePage !== "Departments" && <section className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {[
-              { title: "Total Employees", value: employees.length, icon: "♟", iconBg: "bg-blue-100 text-blue-600", note: "Current employee records" },
-              { title: "Departments", value: departments.length, icon: "▦", iconBg: "bg-emerald-100 text-emerald-600", note: "Across the organization" },
-              { title: "Managers", value: managersCount, icon: "♙", iconBg: "bg-orange-100 text-orange-600", note: employees.length ? `${Math.round((managersCount / employees.length) * 100)}% of total employees` : "No employee records yet" },
-              { title: "Average Salary", value: formatSalary(averageSalary), icon: "▤", iconBg: "bg-violet-100 text-violet-600", note: "Based on current records" },
-            ].map((card) => <article key={card.title} className="min-h-[98px] rounded-lg border border-slate-200/80 bg-white p-4 shadow-[0_1px_4px_rgba(15,23,42,0.03)]">
-              <div className="flex items-center gap-3"><div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-xl ${card.iconBg}`}>{card.icon}</div><div className="min-w-0"><p className="text-[11px] text-slate-500">{card.title}</p><p className="mt-1 text-[21px] font-bold leading-none tracking-tight text-[#101a35]">{card.value}</p><p className="mt-2 text-[10px] text-slate-400">{card.note}</p></div></div>
-            </article>)}
-          </section>}
-
-          {activePage === "Departments" ? <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-bold text-[#101a35]">Departments</h2><p className="mt-1 text-xs text-slate-500">A summary of the teams in your organization.</p>
-            {departments.length === 0 ? <p className="py-10 text-center text-sm text-slate-500">No departments found. Add an employee to get started.</p> : <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{departments.map((department) => { const count = employees.filter((employee) => employee.department === department).length; return <div key={department} className="rounded-lg border border-slate-200 p-5"><div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-lg text-blue-600">▦</div><h3 className="mt-3 font-semibold">{department}</h3><p className="mt-1 text-sm text-slate-500">{count} {count === 1 ? "employee" : "employees"}</p><button type="button" onClick={() => { setDepartmentFilter(department); setActivePage("Employees"); }} className="mt-4 text-xs font-semibold text-blue-600 hover:text-blue-800">View employees →</button></div>; })}</div>}
-          </section> : <section className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-[0_1px_5px_rgba(15,23,42,0.04)]">
-            <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:px-5"><div><h2 className="text-[17px] font-bold tracking-tight text-[#101a35]">All Employees</h2><p className="mt-1 text-xs text-slate-500">A complete list of your organization's employees.</p></div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(200px,1fr)_180px_170px]">
-                <label className="flex h-[35px] items-center gap-2 rounded-md border border-slate-200 px-3 text-slate-400"><span className="text-base">⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search employees..." aria-label="Search employees" className="w-full text-xs outline-none placeholder:text-slate-400" /></label>
-                <select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)} aria-label="Filter by department" className="h-[35px] rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-blue-400"><option>All Departments</option>{departments.map((department) => <option key={department}>{department}</option>)}</select>
-                <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} aria-label="Filter by role" className="h-[35px] rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-blue-400"><option>All Roles</option>{roles.map((role) => <option key={role}>{role}</option>)}</select>
+            {/* Recent employees */}
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-700">Recent Employees</h3>
+                <button
+                  type="button"
+                  onClick={() => setActivePage("Employees")}
+                  className="text-xs font-medium text-blue-600 hover:text-blue-800 transition"
+                >
+                  View all →
+                </button>
               </div>
+              {loading ? (
+                <div className="p-8 text-center text-slate-400 text-sm">Loading…</div>
+              ) : error ? (
+                <div className="p-6 text-sm text-rose-600 bg-rose-50">{error}</div>
+              ) : employees.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-sm">No employees yet.</div>
+              ) : (
+                <ul className="divide-y divide-slate-50">
+                  {employees.slice(0, 5).map((emp) => (
+                    <li key={emp.id} className="flex items-center gap-4 px-6 py-3 hover:bg-slate-50 transition">
+                      <EmployeeAvatar name={emp.name} />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-800 truncate">{emp.name}</p>
+                        <p className="text-xs text-slate-400 truncate">{emp.department} · {emp.role}</p>
+                      </div>
+                      {canViewCompensation && (
+                        <span className="text-xs font-medium text-slate-600 shrink-0">{formatSalary(emp.salary)}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
-            <div className="overflow-x-auto px-4 pb-1 sm:px-5"><table className="w-full min-w-[760px] border-collapse text-left text-xs"><thead><tr className="bg-[#f1f4f8] text-[9px] font-bold uppercase tracking-wide text-slate-500"><th className="rounded-l-md px-4 py-3">Employee</th><th className="px-3 py-3">Employee ID</th><th className="px-3 py-3">Department</th><th className="px-3 py-3">Role</th><th className="px-3 py-3 text-right">Salary</th><th className="rounded-r-md px-3 py-3 text-center">Actions</th></tr></thead>
-              <tbody className="divide-y divide-slate-100">{loading && <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-500">Loading employees…</td></tr>}
-                {!loading && !error && filteredEmployees.map((employee, index) => <tr key={employee.id} className="transition hover:bg-blue-50/40"><td className="px-4 py-2"><div className="flex items-center gap-3"><div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${["bg-blue-100 text-blue-700", "bg-pink-100 text-pink-700", "bg-emerald-100 text-emerald-700", "bg-orange-100 text-orange-700", "bg-violet-100 text-violet-700"][index % 5]}`}>{getInitials(employee.name)}</div><div><p className="font-semibold text-slate-800">{employee.name}</p><p className="mt-0.5 text-[10px] text-slate-400">{`${String(employee.name || "").toLowerCase().replace(/\s+/g, ".")}@beetalogic.com`}</p></div></div></td><td className="px-3 py-3 font-medium text-slate-700">{employee.id}</td><td className="px-3 py-3 text-slate-700">{employee.department}</td><td className="px-3 py-3 text-slate-700">{employee.role}</td><td className="px-3 py-3 text-right font-medium text-slate-800">{formatSalary(employee.salary)}</td><td className="px-3 py-2"><div className="flex justify-center gap-1.5"><button type="button" onClick={() => openEditForm(employee)} className="rounded-md border border-slate-200 px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700">Edit</button><button type="button" onClick={() => handleDelete(employee)} className="rounded-md border border-rose-200 px-2.5 py-1.5 text-[10px] font-semibold text-rose-600 hover:bg-rose-50">Delete</button></div></td></tr>)}
-                {!loading && !error && filteredEmployees.length === 0 && <tr><td colSpan={6} className="px-4 py-12 text-center"><p className="font-semibold text-slate-700">No employees found</p><p className="mt-1 text-xs text-slate-500">Try another search or change the filters.</p></td></tr>}
-              </tbody></table></div>
-            <div className="flex flex-col gap-2 border-t border-slate-100 px-5 py-3 text-[10px] text-slate-400 sm:flex-row sm:items-center sm:justify-between"><span>Showing {loading ? "…" : filteredEmployees.length} of {employees.length} employees</span><button type="button" onClick={() => { setSearch(""); setDepartmentFilter("All Departments"); setRoleFilter("All Roles"); }} className="self-start font-semibold text-blue-600 hover:text-blue-800">Clear filters</button></div>
-          </section>}
-          <p className="mt-5 text-center text-[10px] text-slate-400">BeetaLogic · Employee Management System</p>
-        </main>
+          </div>
+        )}
+
+        {/* ── EMPLOYEES ───────────────────────────────────────────── */}
+        {activePage === "Employees" && (
+          <div className="p-6 space-y-4">
+            {/* Header row */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">Employees</h2>
+                <p className="text-sm text-slate-500 mt-0.5">{filteredEmployees.length} record{filteredEmployees.length !== 1 ? "s" : ""} found</p>
+              </div>
+              {can("addEmployee") && (
+                <button
+                  id="add-employee-btn"
+                  type="button"
+                  onClick={openAddForm}
+                  className="flex items-center gap-2 rounded-xl bg-[#1677f9] px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700 transition"
+                >
+                  <span className="text-lg leading-none">+</span> Add Employee
+                </button>
+              )}
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-3">
+              <select
+                id="dept-filter"
+                value={departmentFilter}
+                onChange={(e) => setDepartmentFilter(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none focus:border-blue-400 transition"
+              >
+                <option>All Departments</option>
+                {departments.map((d) => <option key={d}>{d}</option>)}
+              </select>
+              <select
+                id="role-filter"
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm outline-none focus:border-blue-400 transition"
+              >
+                <option>All Roles</option>
+                {roles.map((r) => <option key={r}>{r}</option>)}
+              </select>
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700 flex items-center gap-3">
+                <span className="text-xl">⚠️</span>
+                <div>
+                  <p className="font-semibold">Backend unavailable</p>
+                  <p className="mt-0.5 text-xs text-rose-500">{error}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadEmployees}
+                  className="ml-auto rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 transition"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {/* Table */}
+            <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              {loading ? (
+                <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-3">
+                  <svg className="h-8 w-8 animate-spin text-blue-500" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  <span className="text-sm">Loading employees…</span>
+                </div>
+              ) : filteredEmployees.length === 0 ? (
+                <div className="py-16 text-center text-slate-400">
+                  <div className="text-4xl mb-3">🔍</div>
+                  <p className="text-sm font-medium">No employees found</p>
+                  <p className="text-xs mt-1">Try adjusting your search or filters.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 bg-[#f8fafc]">
+                        <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Employee</th>
+                        <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">ID</th>
+                        <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Department</th>
+                        <th className="px-5 py-3 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-400">Role</th>
+                        {canViewCompensation && (
+                          <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-400">Salary</th>
+                        )}
+                        {(can("editEmployee") || can("deleteEmployee")) && (
+                          <th className="px-5 py-3 text-right text-[11px] font-semibold uppercase tracking-wide text-slate-400">Actions</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {filteredEmployees.map((emp) => (
+                        <tr key={emp.id} className="hover:bg-slate-50 transition group">
+                          <td className="px-5 py-3">
+                            <div className="flex items-center gap-3">
+                              <EmployeeAvatar name={emp.name} />
+                              <span className="font-medium text-slate-800">{emp.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-5 py-3 font-mono text-xs text-slate-500">{emp.id}</td>
+                          <td className="px-5 py-3">
+                            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">{emp.department}</span>
+                          </td>
+                          <td className="px-5 py-3 text-slate-600">{emp.role}</td>
+                          {canViewCompensation && (
+                            <td className="px-5 py-3 text-right font-medium text-slate-700">{formatSalary(emp.salary)}</td>
+                          )}
+                          {(can("editEmployee") || can("deleteEmployee")) && (
+                            <td className="px-5 py-3 text-right">
+                              <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition">
+                                {can("editEmployee") && (
+                                  <button
+                                    id={`edit-btn-${emp.id}`}
+                                    type="button"
+                                    onClick={() => openEditForm(emp)}
+                                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-blue-300 hover:text-blue-600 shadow-sm transition"
+                                  >
+                                    Edit
+                                  </button>
+                                )}
+                                {can("deleteEmployee") && (
+                                  <button
+                                    id={`delete-btn-${emp.id}`}
+                                    type="button"
+                                    onClick={() => requestDelete(emp)}
+                                    className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-100 shadow-sm transition"
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activePage === "Attendance" && <AttendancePage search={search} />}
+        {activePage === "OfficeLocation" && can("manageDepartments") && (
+          <OfficeLocationPage />
+        )}
+
+        {/* ── DEPARTMENTS ─────────────────────────────────────────── */}
+        {activePage === "Departments" && (
+          <div className="p-6 space-y-4">
+            <div>
+              <h2 className="text-xl font-bold text-slate-800">Departments</h2>
+              <p className="text-sm text-slate-500 mt-0.5">{departments.length} department{departments.length !== 1 ? "s" : ""} in the organisation</p>
+            </div>
+
+            {can("manageDepartments") && (
+              <form
+                className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+                onSubmit={addDepartment}
+              >
+                <label className="min-w-56 flex-1 text-xs font-medium text-slate-600">
+                  New department
+                  <input
+                    value={departmentName}
+                    onChange={(event) => setDepartmentName(event.target.value)}
+                    maxLength={100}
+                    required
+                    placeholder="e.g. Engineering"
+                    className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {saving ? "Saving…" : "Add department"}
+                </button>
+                {departmentFormError && (
+                  <p role="alert" className="w-full text-sm text-rose-700">
+                    {departmentFormError}
+                  </p>
+                )}
+              </form>
+            )}
+
+            {deletedDepartment && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <span>
+                  {deletedDepartment.name} was removed.
+                  {deletedDepartment.moveTo
+                    ? ` Employees moved to ${deletedDepartment.moveTo}.`
+                    : ""}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleUndoDepartment}
+                  disabled={saving}
+                  className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                >
+                  {saving ? "Restoring…" : "Undo removal"}
+                </button>
+              </div>
+            )}
+
+            {departmentDeleteError && (
+              <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {departmentDeleteError}
+              </div>
+            )}
+
+            {loading ? (
+              <div className="flex items-center justify-center py-16 text-slate-400 text-sm">Loading…</div>
+            ) : departments.length === 0 ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-400">
+                <div className="text-4xl mb-3">🏢</div>
+                <p className="text-sm font-medium">No departments yet.</p>
+                <p className="text-xs mt-1">Add a department or create an employee record.</p>
+              </div>
+            ) : filteredDepartments.length === 0 ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-slate-500">
+                No departments match “{search}”.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredDepartments.map((dept, i) => {
+                  const deptEmployees = employees.filter((e) => e.department === dept);
+                  const avgSal = deptEmployees.length
+                    ? deptEmployees.reduce((s, e) => s + Number(e.salary || 0), 0) / deptEmployees.length
+                    : 0;
+                  const color = AVATAR_COLORS[i % AVATAR_COLORS.length];
+                  return (
+                    <div
+                      key={dept}
+                      className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:shadow-md transition"
+                      style={{ borderTop: `3px solid ${color}` }}
+                    >
+                      <div className="flex items-center gap-3 mb-3">
+                        <div
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-lg font-bold text-white"
+                          style={{ background: color }}
+                        >
+                          {dept[0]}
+                        </div>
+                        <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                          <h3 className="truncate font-bold text-slate-800">{dept}</h3>
+                          {can("manageDepartments") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const targets = departments.filter(
+                                  (name) => name.toLowerCase() !== dept.toLowerCase()
+                                );
+                                setDepartmentDeleteError("");
+                                setPendingDepartmentDelete({
+                                  department: dept,
+                                  moveTo: targets[0] || "",
+                                  employeeCount: deptEmployees.length,
+                                });
+                              }}
+                              className="shrink-0 rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div className="rounded-lg bg-slate-50 p-3">
+                          <p className="text-slate-400 font-semibold uppercase tracking-wide text-[10px]">Employees</p>
+                          <p className="text-slate-800 font-bold text-lg mt-0.5">{deptEmployees.length}</p>
+                        </div>
+                        <div className="rounded-lg bg-slate-50 p-3">
+                          <p className="text-slate-400 font-semibold uppercase tracking-wide text-[10px]">Avg Salary</p>
+                          <p className="text-slate-800 font-bold text-sm mt-0.5">{formatSalary(avgSal)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activePage === "Reports" && (
+          <div className="space-y-5 p-6">
+            <div>
+              <h2 className="text-xl font-bold text-slate-800">HR Reports</h2>
+              <p className="mt-0.5 text-sm text-slate-500">
+                A summary of employee headcount and department distribution.
+              </p>
+            </div>
+
+            {error && (
+              <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm text-rose-700">
+                {error}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <StatCard label="Total Employees" value={employees.length} icon="♟" accent="#1677f9" />
+              <StatCard label="Departments" value={departments.length} icon="▦" accent="#8b5cf6" />
+              <StatCard label="Managers" value={managersCount} icon="🧑‍💼" accent="#f97316" />
+            </div>
+
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="border-b border-slate-100 px-5 py-4">
+                <h3 className="text-sm font-bold text-slate-800">
+                  Headcount by department
+                </h3>
+              </div>
+              {loading ? (
+                <p className="p-6 text-sm text-slate-400">Loading report…</p>
+              ) : departments.length === 0 ? (
+                <p className="p-6 text-sm text-slate-400">
+                  No department data is available yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                      <tr>
+                        <th className="px-5 py-3">Department</th>
+                        <th className="px-5 py-3 text-right">Employees</th>
+                        <th className="px-5 py-3 text-right">Share</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {departments.map((department) => {
+                        const count = employees.filter(
+                          (employee) => employee.department === department
+                        ).length;
+                        const share = employees.length
+                          ? Math.round((count / employees.length) * 100)
+                          : 0;
+                        return (
+                          <tr key={department}>
+                            <td className="px-5 py-3 font-medium text-slate-800">
+                              {department}
+                            </td>
+                            <td className="px-5 py-3 text-right text-slate-600">
+                              {count}
+                            </td>
+                            <td className="px-5 py-3 text-right text-slate-600">
+                              {share}%
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+
+        {/* ── MY PROFILE ──────────────────────────────────────────── */}
+        {activePage === "MyProfile" && (
+          <div className="p-6">
+            <div className="mb-5">
+              <h2 className="text-xl font-bold text-slate-800">My Profile</h2>
+              <p className="text-sm text-slate-500 mt-0.5">Your account information.</p>
+            </div>
+            <MyProfilePage employees={employees} />
+          </div>
+        )}
+
+        {activePage === "Settings" && (
+          <div className="p-6">
+            <AccountSettings />
+          </div>
+        )}
       </div>
 
+      {/* ── Add / Edit form modal ──────────────────────────────────────────── */}
       {modalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) closeForm();
-          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) closeForm(); }}
         >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="employee-form-title"
-            className="my-8 w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl sm:p-8"
-          >
-            <div className="mb-6 flex items-start justify-between gap-4">
-              <div>
-                <h3 id="employee-form-title" className="text-xl font-bold text-slate-900">
-                  {editingId !== null ? "Update employee" : "Add employee"}
-                </h3>
-                <p className="mt-1 text-sm text-slate-500">
-                  {editingId !== null ? "Edit the employee details below." : "Enter the new employee details."}
-                </p>
-              </div>
+          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden">
+            {/* Modal header */}
+            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+              <h3 className="text-base font-bold text-slate-800">
+                {editingId ? "Edit Employee" : "Add Employee"}
+              </h3>
               <button
                 type="button"
                 onClick={closeForm}
                 disabled={saving}
-                className="rounded-lg px-3 py-1 text-2xl leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
-                aria-label="Close form"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition text-xl leading-none"
               >
                 ×
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <label className="block text-sm font-medium text-slate-700">
-                  Employee ID
+            {/* Form */}
+            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4" noValidate>
+              {[
+                { label: "Employee ID", name: "id", type: "text", placeholder: "e.g. E001", disabled: editingId !== null },
+                { label: "Full Name",   name: "name", type: "text", placeholder: "e.g. Arun Kumar" },
+                { label: "Department",  name: "department", type: "text", placeholder: "e.g. Engineering" },
+                { label: "Role / Title",name: "role", type: "text", placeholder: "e.g. Software Engineer" },
+                { label: "Salary (INR)",name: "salary", type: "number", placeholder: "e.g. 750000" },
+              ].map((f) => (
+                <div key={f.name}>
+                  <label
+                    htmlFor={`form-${f.name}`}
+                    className="mb-1.5 block text-xs font-semibold text-slate-500 uppercase tracking-wide"
+                  >
+                    {f.label}
+                  </label>
                   <input
-                    name="id"
-                    value={form.id}
+                    id={`form-${f.name}`}
+                    name={f.name}
+                    type={f.type}
+                    value={form[f.name]}
                     onChange={handleFormChange}
-                    disabled={editingId !== null || saving}
-                    required
-                    maxLength={30}
-                    placeholder="e.g. D04"
-                    className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-100"
+                    placeholder={f.placeholder}
+                    disabled={f.disabled || saving}
+                    className="w-full rounded-xl border border-slate-200 bg-[#f8fafc] px-4 py-2.5 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-400/20 disabled:opacity-50 transition"
                   />
-                </label>
-                <label className="block text-sm font-medium text-slate-700">
-                  Full name
-                  <input
-                    name="name"
-                    value={form.name}
-                    onChange={handleFormChange}
-                    disabled={saving}
-                    required
-                    maxLength={100}
-                    placeholder="e.g. Arun Kumar"
-                    className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  />
-                </label>
-                <label className="block text-sm font-medium text-slate-700">
-                  Department
-                  <input
-                    name="department"
-                    value={form.department}
-                    onChange={handleFormChange}
-                    disabled={saving}
-                    required
-                    maxLength={80}
-                    placeholder="e.g. IT"
-                    className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  />
-                </label>
-                <label className="block text-sm font-medium text-slate-700">
-                  Role
-                  <input
-                    name="role"
-                    value={form.role}
-                    onChange={handleFormChange}
-                    disabled={saving}
-                    required
-                    maxLength={100}
-                    placeholder="e.g. Developer"
-                    className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  />
-                </label>
-                <label className="block text-sm font-medium text-slate-700 sm:col-span-2">
-                  Monthly salary (₹)
-                  <input
-                    name="salary"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.salary}
-                    onChange={handleFormChange}
-                    disabled={saving}
-                    required
-                    placeholder="e.g. 35000"
-                    className="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-                  />
-                </label>
-              </div>
+                </div>
+              ))}
 
               {formError && (
                 <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -460,29 +1004,69 @@ function App() {
                 </div>
               )}
 
-              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-end">
+              <div className="flex gap-3 pt-1">
                 <button
                   type="button"
                   onClick={closeForm}
                   disabled={saving}
-                  className="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition"
                 >
                   Cancel
                 </button>
                 <button
+                  id="form-save-btn"
                   type="submit"
                   disabled={saving}
-                  className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex-1 rounded-xl bg-[#1677f9] py-2.5 text-sm font-semibold text-white shadow hover:bg-blue-700 disabled:opacity-60 transition"
                 >
-                  {saving ? "Saving…" : editingId !== null ? "Save changes" : "Add employee"}
+                  {saving ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      Saving…
+                    </span>
+                  ) : editingId ? "Save Changes" : "Add Employee"}
                 </button>
               </div>
             </form>
-          </section>
+          </div>
         </div>
       )}
-    </div>
+
+      {/* ── Confirm delete modal ─────────────────────────────────────────── */}
+      <ConfirmDeleteModal
+        isOpen={!!pendingDelete}
+        employee={pendingDelete}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
+      <DepartmentDeleteModal
+        department={pendingDepartmentDelete?.department}
+        departments={departments}
+        moveTo={pendingDepartmentDelete?.moveTo || ""}
+        employeeCount={pendingDepartmentDelete?.employeeCount || 0}
+        error={departmentDeleteError}
+        saving={saving}
+        onMoveToChange={(moveTo) =>
+          setPendingDepartmentDelete((current) => current
+            ? { ...current, moveTo }
+            : current)
+        }
+        onConfirm={confirmDepartmentDelete}
+        onCancel={() => {
+          setPendingDepartmentDelete(null);
+        }}
+      />
+    </>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
+  );
+}

@@ -1,2 +1,34 @@
-
 @import "tailwindcss";
+
+/* ─── Base styles ─────────────────────────────────────────── */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── Sidebar transition helpers ──────────────────────────── */
+#sidebar {
+  will-change: width;
+}
+
+/* The main content margin mirrors the sidebar width */
+#main-content {
+  transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ─── Smooth scrollbars ───────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ─── Custom focus ring ───────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid #1677f9;
+  outline-offset: 2px;
+}
